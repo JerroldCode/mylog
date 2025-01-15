@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<search>
+  <entry>
+    <title>指令重排那些事儿</title>
+    <url>/2022/08/30/JUC01/</url>
+    <content><![CDATA[<h1 id="抛砖引玉"><a href="#抛砖引玉" class="headerlink" title="抛砖引玉"></a>抛砖引玉</h1><p>这里有一段代码，思考下这个死循环会结束吗？</p>
+<figure class="highlight java"><table><tr><td class="code"><pre><code class="hljs java"><span class="hljs-keyword">public</span> <span class="hljs-keyword">class</span> <span class="hljs-title class_">ReOrder</span> &#123;<br><br>    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-type">int</span> <span class="hljs-variable">num1</span> <span class="hljs-operator">=</span> <span class="hljs-number">0</span>, num2 = <span class="hljs-number">0</span>;<br>    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-type">int</span> <span class="hljs-variable">x</span> <span class="hljs-operator">=</span> <span class="hljs-number">0</span>, y = <span class="hljs-number">0</span>;<br><br>    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title function_">main</span><span class="hljs-params">(String[] args)</span> <span class="hljs-keyword">throws</span> InterruptedException &#123;<br><br>        <span class="hljs-keyword">for</span> (;;)&#123;<br>            <br>            <span class="hljs-type">Thread</span> <span class="hljs-variable">t1</span> <span class="hljs-operator">=</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Thread</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">Runnable</span>() &#123;<br>                <span class="hljs-meta">@Override</span><br>                <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title function_">run</span><span class="hljs-params">()</span> &#123;<br>                    num1 = <span class="hljs-number">1</span>;<br>                    x = num2;<br>                &#125;<br>            &#125;);<br><br>            <span class="hljs-type">Thread</span> <span class="hljs-variable">t2</span> <span class="hljs-operator">=</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Thread</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">Runnable</span>() &#123;<br>                <span class="hljs-meta">@Override</span><br>                <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title function_">run</span><span class="hljs-params">()</span> &#123;<br>                    num2 = <span class="hljs-number">1</span>;<br>                    y = num1;<br>                &#125;<br>            &#125;);<br><br>            t1.start();<br>            t2.start();<br><br>            t1.join();<br>            t2.join();<br><br>            System.out.println(<span class="hljs-string">&quot;执行结果  x=&gt;&quot;</span>+x + <span class="hljs-string">&quot;  y=&gt;&quot;</span>+y + <span class="hljs-string">&quot;  num1=&gt;&quot;</span>+num1 + <span class="hljs-string">&quot;  num2=&gt;&quot;</span>+num2);<br>            <span class="hljs-comment">//这个if判断会成功吗？</span><br>            <span class="hljs-keyword">if</span> (x == <span class="hljs-number">0</span> &amp;&amp; y == <span class="hljs-number">0</span>)&#123;<br>                System.out.println(<span class="hljs-string">&quot;执行结束  x=&gt;&quot;</span>+x + <span class="hljs-string">&quot;y=&gt;&quot;</span>+y);<br>                <span class="hljs-keyword">break</span>;<br>            &#125;<br><br>            <span class="hljs-comment">//重新赋值</span><br>            num1=<span class="hljs-number">0</span>;<br>            num2=<span class="hljs-number">0</span>;<br>            x=<span class="hljs-number">0</span>;<br>            y=<span class="hljs-number">0</span>;<br><br>        &#125;<br>    &#125;<br>&#125;<br></code></pre></td></tr></table></figure>
+
+<p>首先我们可以来分析一波：这里我们创建了两个线程，对于这两个线程，情况无非有以下几种：</p>
+<ul>
+<li>t1全部执行 -&gt; t2全部执行 </li>
+<li>t2全部执行 -&gt; t1全部执行 </li>
+<li>t1执行Line 1 -&gt; t2执行Line 1 (之后无论哪个线程先执行Line 2 ，结果没有影响)</li>
+<li>t2执行Line 1 -&gt; t1执行Line 1 (之后无论哪个线程先执行Line 2 ，结果没有影响)</li>
+</ul>
+<p>这时四种情况对应的结果只有三种，分别是：[x&#x3D;0  y&#x3D;1  num1&#x3D;1  num2&#x3D;1]，[x&#x3D;1  y&#x3D;0  num1&#x3D;1  num2&#x3D;1]，[x&#x3D;1  y&#x3D;1  num1&#x3D;1  num2&#x3D;1]</p>
+<p>也就是说，x和y同时为0的情况不会出现，这也就意味着死循环不会结束。（好家伙，直接整成永动机了）</p>
+<p>现实的结果是：有概率结束死循环。</p>
+<p>为什么会发生这种情况，这就要聊到指令重排了。</p>
+<h1 id="指令重排"><a href="#指令重排" class="headerlink" title="指令重排"></a>指令重排</h1><p>所谓的指令重排，可以深究到编译原理中，在此不做太深的代入，简单的说就是为了提高程序执行时的性能所做的优化，把代码的执行顺序进行了重排序。</p>
+<p>再看之前的代码，为什么会出现x和y同时为0的情况？这是因为两个线程同时执行时，指令重排导致两个线程的Line 2先执行，从而发生了这种情况。</p>
+<p>对于指令重排，有以下三种类型：</p>
+<ul>
+<li>编译器优化：编译器在不改变单线程程序语义的前提下可以进行重排序。</li>
+<li>指令级并行：现代处理器采用了指令级并行技术将多条指令重叠执行。简单的说就是如果不存在数据依赖性，处理器可以改变语句对应机器指令的执行顺序。</li>
+<li>内存系统：由于处理器使用缓存和读&#x2F;写缓冲区，这使得加载和存储操作看上去可能是在乱序执行。</li>
+</ul>
+<p>其中的编译器优化属于编译器重排序，JMM的编译器重排序规则会<font color=red>禁止特定类型</font>的编译器重排序。</p>
+<p>指令级并行和内存系统属于处理器重编译，JMM的处理器重排序规则会要求Java编译器在生成指令序列时，插入<font color=red>特定类型的内存屏障</font>，通过内存屏障指令来<font color=red>禁止特定类型</font>的处理器重排序。</p>
+<p><img  src="/images/juc/img.png"  ><span class="image-caption">重排序顺序</span></p>
+<p>需要注意的是，因为进行了重排序可能会导致内存可见性的问题。不过JMM属于语言级的内存模型，它确保在不同的编译器和不同的处理器平台之上，通过禁止特定类型的编译器重排序和处理器重排序，为程序员提供一致的内存可见性保证。</p>
+<h1 id="内存屏障"><a href="#内存屏障" class="headerlink" title="内存屏障"></a>内存屏障</h1><p>内存屏障是一种CPU指令,用于控制特定条件下的重排序和内存可见性问题。</p>
+<table>
+<thead>
+<tr>
+<th>屏障类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>LoadLoad Barriers</td>
+<td>确保Load1数据的装载先于Load2及所有后续装载命令的装载</td>
+</tr>
+<tr>
+<td>StoreStore Barriers</td>
+<td>确保Store1数据刷新到内存先于Store2及后续所有后续存储指令</td>
+</tr>
+<tr>
+<td>LoadStore Barriers</td>
+<td>确保Load1数据装载先于Store2及所有后续存储指令刷新到内存</td>
+</tr>
+<tr>
+<td>StoreLoad Barriers</td>
+<td>确保Store1数据对其他处理器变得可见（刷新到内存）先于Load2以及所有后续装载指令</td>
+</tr>
+</tbody></table>
+<h1 id="happens-before"><a href="#happens-before" class="headerlink" title="happens-before"></a>happens-before</h1><blockquote>
+<p>Java内存模型是通过各种操作来定义的，包括对变量的读&#x2F;写操作，监视器的加锁和释放操作，以及线程的启动和合并操作。JMM为程序中所有的操作定义了一个偏序关系，称之为Happens-Before。要想保证执行操作B的线程看到操作A的结果(无论A和B是否在同一个线程中执行)，那么在A和B之间必须满足Happens-Before关系。如果两个操作之间缺乏 Happens-Before 关系，那么JVM可以对它们任意地重排序。<br>当一个变量被多个线程读取并且至少被一个线程写人时，如果在读操作和写操作之间没有依照Happens-Before来排序，那么就会产生数据竞争问题。在正确同步的程序中不存在数据竞争，并会表现出串行一致性，这意味着程序中的所有操作都会按照一种固定的和全局的顺序执行。<br>注：偏序关系是集合上的一种关系，具有反对称、自反和传递属性。简单的举例就是我可以喜欢兰博基尼大牛而不是保时捷帕拉梅拉，可以喜欢西湖而不是西溪湿地，但不必要在大牛和西湖之间做出选择。<br>— 节选自《Java并发编程实战》</p>
+</blockquote>
+<h2 id="happens-before规则："><a href="#happens-before规则：" class="headerlink" title="happens-before规则："></a>happens-before规则：</h2><table>
+<thead>
+<tr>
+<th>规则</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>程序顺序规则</td>
+<td>如果程序中操作A在操作B之前，那么线程中A操作将在B操作之前执行</td>
+</tr>
+<tr>
+<td>监视器锁规则</td>
+<td>在监视器锁上的解锁操作必须在同一个监视器锁上的加锁操作之前执行</td>
+</tr>
+<tr>
+<td>volatile变量规则</td>
+<td>对volatile变量的写入操作必须在对该变量的读操作之前执行</td>
+</tr>
+<tr>
+<td>线程启动规则</td>
+<td>在线程上对Thread.Start的调用必须在该线程执行任何操作之前执行</td>
+</tr>
+<tr>
+<td>线程结束规则</td>
+<td>线程中的任何操作都必须在其他线程检测到该线程已经结束之前执行，或者从Thread.join中成功返回，或者在调用Thread.isAlive时返回false</td>
+</tr>
+<tr>
+<td>线程中断规则</td>
+<td>当一个线程在另一个线程上调用interrupt时，必须在被中断线程检测到interrupt调用之前执行（抛出InterruptedException或者调用isInterrupted或者interrupted</td>
+</tr>
+<tr>
+<td>终结器规则</td>
+<td>对象的构造函数必须在启动该对象的终结器之前执行完成</td>
+</tr>
+<tr>
+<td>传递性</td>
+<td>如果操作A在操作B之前执行，操作B在操作C之前执行，那么操作A必须在操作C之前执行</td>
+</tr>
+</tbody></table>
+<p><img  src="/images/juc/img1.png"  ><span class="image-caption">监视器锁规则实例</span></p>
+<p>《Java并发编程实战》中给出的例子，在线程A内部的所有操作都按照它们在源程序中的先后顺序来排序，在线程B内部的操作也是如此。由于A释放了锁M，并且B随后获得了锁M，因比A中所有在释放锁之前的操作，也就位于B中请求锁之后的所有操作之前。如果这两个线程是在不同的锁上进行同步的，那么就不能推断它们之间的动作顺序，因为在这两个线程的操作了之间并不存在Happens-Before关系。</p>
+<p>之所以定义happens-before规则，其目的是阐述操作之间的内存可见性。在JMM中，如果一个操作执行的结果需要对另一个操作可见，那么这两个操作之间必须要存在happens-before关系。</p>
+<p>需要注意的一点是：两个操作之间具有happens-before关系，并不意味着前一个操作必须要在后一个操作之前执行。所要求的仅仅是前一个操作对后一个操作可见，且前一个操作按顺序排在第二个操作之前。</p>
+<h1 id="数据依赖性"><a href="#数据依赖性" class="headerlink" title="数据依赖性"></a>数据依赖性</h1><p>在前面提到的指令重排的指令级并行类型中说到过如果不存在数据依赖性，处理器可以改变语句对应机器指令的执行顺序。</p>
+<p>所谓的数据依赖性，简单的说就是当有两个及多个操作访问同一个变量，且其中有写操作的时候，此时就存在了数据依赖性。</p>
+<p>我们将数据依赖性分为以下三种情况：</p>
+<ul>
+<li><p>先读后写</p>
+<figure class="highlight oxygene"><table><tr><td class="code"><pre><code class="hljs oxygene"><span class="hljs-keyword">method</span> <span class="hljs-params">()</span> <span class="hljs-comment">&#123;</span><br><span class="hljs-comment">        //读数据</span><br><span class="hljs-comment">        a = b;</span><br><span class="hljs-comment">        //写数据</span><br><span class="hljs-comment">        b = 1;</span><br><span class="hljs-comment">    &#125;</span><br></code></pre></td></tr></table></figure>
+</li>
+<li><p>先写后读</p>
+<figure class="highlight oxygene"><table><tr><td class="code"><pre><code class="hljs oxygene"><span class="hljs-keyword">method</span> <span class="hljs-params">()</span> <span class="hljs-comment">&#123;</span><br><span class="hljs-comment">        //写数据</span><br><span class="hljs-comment">        a = 1;</span><br><span class="hljs-comment">        //读数据</span><br><span class="hljs-comment">        b = a;</span><br><span class="hljs-comment">    &#125;</span><br></code></pre></td></tr></table></figure>
+</li>
+<li><p>先写后写</p>
+<figure class="highlight oxygene"><table><tr><td class="code"><pre><code class="hljs oxygene"><span class="hljs-keyword">method</span> <span class="hljs-params">()</span> <span class="hljs-comment">&#123;</span><br><span class="hljs-comment">        //写数据</span><br><span class="hljs-comment">        a = 1;</span><br><span class="hljs-comment">        //写数据</span><br><span class="hljs-comment">        a = 2;</span><br><span class="hljs-comment">    &#125;</span><br></code></pre></td></tr></table></figure></li>
+</ul>
+<blockquote>
+<p>注：为了方便举例，例子只采用了单线程程序。</p>
+</blockquote>
+<p>对于上面的例子，我们只要改变其中的执行顺序，其结果也会改变，这就说明了其存在数据依赖性。</p>
+<h1 id="as-if-serial语义"><a href="#as-if-serial语义" class="headerlink" title="as-if-serial语义"></a>as-if-serial语义</h1><p>as-if-serial语义指的是无论怎么重排序，程序最后的结果是不能被改变。不管是编译器还是处理器，都得遵循as-if-serial语义。</p>
+<p>为了保证最后结果的正确性，存在数据依赖的操作不会进行重排序，因此上面的三种具有数据依赖性的操作不会被重排序。</p>
+<figure class="highlight pgsql"><table><tr><td class="code"><pre><code class="hljs pgsql"><span class="hljs-type">int</span> a = <span class="hljs-number">1</span>;           <span class="hljs-type">Line</span> <span class="hljs-number">1</span><br><span class="hljs-type">int</span> b = <span class="hljs-number">2</span>;           <span class="hljs-type">Line</span> <span class="hljs-number">2</span><br><span class="hljs-type">int</span> c = a + b;       <span class="hljs-type">Line</span> <span class="hljs-number">3</span><br></code></pre></td></tr></table></figure>
+
+<p>Line 1和Line 2操作没有数据依赖性，而Line 3操作和Line1、Line 2都有数据依赖性。</p>
+<p>因此编译器和处理器可以重排Line 1 和Line 2的执行顺序，但是必须在Line 3之前。</p>
+<h1 id="小结"><a href="#小结" class="headerlink" title="小结"></a>小结</h1><p>指令重排可以提高代码的执行效率，但是也会有很多的坑。所以在多线程中的操作，理解指令重排可能带来的结果，将会帮助我们写出更加健壮性的代码。</p>
+]]></content>
+      <categories>
+        <category>JVM Java</category>
+      </categories>
+      <tags>
+        <tag>JVM</tag>
+        <tag>Java</tag>
+        <tag>JUC</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Docker容器启动失败修改内部配置文件</title>
+    <url>/2022/08/20/Docker01/</url>
+    <content><![CDATA[<p>今天因为项目测试，需要起多个Elastic Search，结果创建的容器每次启动后几秒钟就会停止。</p>
+<p>之后使用命令<code>docker log -f --tail=300 es1</code>查看日志发现</p>
+<p><code>the default discovery settings are unsuitable for production use; at least one of[discovery.seed_hosts,discovery.seed_providers,cluster.initial_master_nodes]must be configured</code></p>
+<p>日志里提示的内容是默认配置不适合使用，需要提供中括号里的几个参数。</p>
+<p>但是容器无法启动，这样就致使无法进入内部进行操作。此时想到了<code>docker cp</code>命令。</p>
+<p><code>docker cp [容器]:容器path 主机path</code></p>
+<p>这样的话就可以把容器中的配置文件复制到主机的指定位置，修改完成后</p>
+<p><code>docker cp 主机path  [容器]:容器path</code></p>
+<p>紧接着反着再来一次，就复制到容器中了。</p>
+]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+        <tag>Elastic Search</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>volatile那些事儿</title>
+    <url>/2022/08/30/JUC02/</url>
+    <content><![CDATA[<h1 id="并发编程的三大基本概念"><a href="#并发编程的三大基本概念" class="headerlink" title="并发编程的三大基本概念"></a>并发编程的三大基本概念</h1><p>在多线程中，常常有这三种概念：原子性、可见性和有序性。</p>
+<h2 id="原子性"><a href="#原子性" class="headerlink" title="原子性"></a>原子性</h2><p> 概念：在一个或多个操作中，要么全部执行完成，要么都不执行。</p>
+<p>例如有两个账户A和B，A向B转账520元，此时进行的两个操作为A账户减520元，B账户加520元，在原子性中，这两个操作必须都执行完，如果只执行了其中的一步是不满足原子性的。</p>
+<p>Java中的JUC并发包中的Atomic包中的类是满足原子性操作的。</p>
+<h2 id="可见性"><a href="#可见性" class="headerlink" title="可见性"></a>可见性</h2><p>  概念：在多个线程访问同一个变量的时候，一个线程修改了该变量的值，其它线程可以及时的看到修改后的值。</p>
+<p>例如有两个线程，i初始值为0，当A线程执行i&#x3D;10的操作，此时没有缓存到主存中，紧接着B线程执行i+5的操作，可是A修改的后的值B并没有获取到，此时产生的结果值为5，而不是15。很显然是不满足可见性的。</p>
+<p>Java中提供了synchronize和Lock通过上锁来确保同一时间只有一个线程来执行同步代码块，并且在释放锁之前会将对变量的修改刷新到主存当中，进而保证了可见性。</p>
+<p>相比上锁，也可以通过今天的主角volatile来保证可见性，具体会在后面详细说明。</p>
+<h2 id="有序性"><a href="#有序性" class="headerlink" title="有序性"></a>有序性</h2><p>概念：程序执行的顺序按照代码的先后顺序进行执行。</p>
+<p>上文中写到过关于指令重排的那些事儿，这里就不做过多赘述了。</p>
+<h1 id="争论"><a href="#争论" class="headerlink" title="争论"></a>争论</h1><p>我们常常会看到这样一句话：volatile关键字可以保证内存可见性和有序性，但不能保证原子性。</p>
+<p>在Java中，简单的赋值操作，包括基础类型和引用类型的赋值操作都是原子性。但是在32位的操作系统中，对于long和double类型的赋值不是原子性的操作。赋值分为两步进行，每次操作32位。</p>
+<p>因此在32位中的volatile关键字勉勉强强可以具有保证原子性的能力，但是在64位中实在是无能为力。</p>
+<p>由于我们通常认为都是64的操作系统，因为才说volatile关键字不能保证原子性，其实是有一些不严谨的。</p>
+]]></content>
+      <categories>
+        <category>JVM Java</category>
+      </categories>
+      <tags>
+        <tag>JVM</tag>
+        <tag>Java</tag>
+        <tag>JUC</tag>
+      </tags>
+  </entry>
+</search>
